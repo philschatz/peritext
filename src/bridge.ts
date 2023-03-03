@@ -6,7 +6,7 @@ import Micromerge, { OperationPath, Patch } from "./micromerge"
 import { EditorState, TextSelection, Transaction } from "prosemirror-state"
 import { EditorView } from "prosemirror-view"
 import { Schema, Slice, Node, Fragment, Mark } from "prosemirror-model"
-import { baseKeymap, Command, Keymap, toggleMark } from "prosemirror-commands"
+import { baseKeymap, toggleMark } from "prosemirror-commands"
 import { keymap } from "prosemirror-keymap"
 import { ALL_MARKS, isMarkType, MarkType, schemaSpec } from "./schema"
 import { ReplaceStep, AddMarkStep, RemoveMarkStep } from "prosemirror-transform"
@@ -34,9 +34,9 @@ export type RootDoc = {
 // built in to prosemirror)
 function addMark<M extends MarkType>(args: { markType: M; makeAttrs: () => Omit<MarkValue[M], "opId" | "active"> }) {
     const { markType, makeAttrs } = args
-    const command: Command<DocSchema> = (
+    const command = (
         state: EditorState,
-        dispatch: ((t: Transaction<DocSchema>) => void) | undefined,
+        dispatch: ((t: Transaction) => void) | undefined,
     ) => {
         const tr = state.tr
         const { $from, $to } = state.selection.ranges[0]
@@ -51,7 +51,7 @@ function addMark<M extends MarkType>(args: { markType: M; makeAttrs: () => Omit<
     return command
 }
 
-const richTextKeymap: Keymap<DocSchema> = {
+const richTextKeymap: any = {
     ...baseKeymap,
     "Mod-b": toggleMark(schema.marks.strong),
     "Mod-i": toggleMark(schema.marks.em),
@@ -204,9 +204,9 @@ export function createEditor(args: {
     editable: boolean
     handleClickOn?: (
         this: unknown,
-        view: EditorView<Schema>,
+        view: EditorView,
         pos: number,
-        node: Node<Schema>,
+        node: Node,
         nodePos: number,
         event: MouseEvent,
         direct: boolean,
@@ -352,7 +352,7 @@ export function createEditor(args: {
  * @param position : an unresolved Prosemirror position in the doc;
  * @param doc : the Prosemirror document containing the position
  */
-function contentPosFromProsemirrorPos(position: number, doc: Node<DocSchema>): number {
+function contentPosFromProsemirrorPos(position: number, doc: Node): number {
     // The -1 accounts for the extra character at the beginning of the PM doc
     // containing the beginning of the paragraph.
     // In some rare cases we can end up with incoming positions outside of the single
@@ -414,7 +414,7 @@ export function prosemirrorDocFromCRDT(args: { schema: DocSchema; spans: FormatS
 }
 
 // Given a CRDT Doc and a Prosemirror Transaction, update the micromerge doc.
-export function applyProsemirrorTransactionToMicromergeDoc(args: { doc: Micromerge; txn: Transaction<DocSchema> }): {
+export function applyProsemirrorTransactionToMicromergeDoc(args: { doc: Micromerge; txn: Transaction }): {
     change: Change | null
     patches: Patch[]
 } {
@@ -436,6 +436,7 @@ export function applyProsemirrorTransactionToMicromergeDoc(args: { doc: Micromer
                     })
                 }
 
+                // This step coalesces the multiple paragraphs back into one paragraph. Because step.slice.content is a Fragment and step.slice.content.content is 2 Paragraph nodes
                 const insertedContent = step.slice.content.textBetween(0, step.slice.content.size)
 
                 operations.push({
