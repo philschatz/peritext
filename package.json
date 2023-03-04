@@ -5,7 +5,7 @@
     "scripts": {
         "start": "vite",
         "start-essay-demo": "parcel ./essay-demo.html",
-        "build": "parcel build ./index.html --public-url=./",
+        "build": "vite build --base ./",
         "typecheck": "tsc --noEmit --watch",
         "prettier": "prettier --write ./index.html *.json ./src/**/* ./test/**/*",
         "check-prettier": "prettier --check ./index.html *.json ./src/**/* ./test/**/*",
