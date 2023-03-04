@@ -154,6 +154,9 @@ export const initializeDocs = (text: string, initialInputOps?: AddMarkOperationI
                 }
             }
         })
+        doc = Automerge.change(doc, doc => {
+            Automerge.splice(doc, CONTENT_KEY, text.length, 0, '!!')
+        })
     }
     return [doc, Automerge.clone(doc)]
 }
@@ -219,7 +222,7 @@ export const extendProsemirrorTransactionWithMicromergePatch = <T>(
         case "mark": {
             for (const mark of patch.marks) {
                 const { key, attr } = getMarkInfo(mark)
-                if (mark.value === false) {
+                if (mark.value === null || mark.value === false) {
                     transaction = transaction.removeMark(
                         prosemirrorPosFromContentPos(mark.start),
                         prosemirrorPosFromContentPos(mark.end),
@@ -313,25 +316,15 @@ export function createEditor(args: {
         // - apply that Prosemirror Transaction to the document
 
         let transaction = state.tr
-        let patches: null | Automerge.Patch[] = null
+        let patches: Automerge.Patch[] = []
         const prevDoc = doc
-        console.log('calling applyChanges. Doc currently has ', Automerge.getAllChanges(doc).length, Automerge.getActorId(doc), Automerge.marks(doc, CONTENT_KEY))
         doc = Automerge.applyChanges(doc, incomingChanges, {
             patchCallback: (p) => {
-                console.log('Setting patches!!!!', p)
-                patches = p
+                patches.push(...p)
             }
         })[0]
-        console.log('called applyChanges. Doc now has ', Automerge.getAllChanges(doc).length, Automerge.getActorId(doc), Automerge.marks(doc, CONTENT_KEY))
 
-        if (!patches) {
-            console.log('Expected to see some changes', Automerge.marks(prevDoc, CONTENT_KEY), Automerge.marks(doc, CONTENT_KEY))
-            console.log('previous heads', Automerge.getHeads(prevDoc))
-            console.log('current heads', Automerge.getHeads(doc))
-            debugger
-        }
-
-        for (const patch of patches || []) {
+        for (const patch of patches) {
             // Get a new Prosemirror transaction containing the effects of the Micromerge patch
             const result = extendProsemirrorTransactionWithMicromergePatch(doc, transaction, patch)
             let { transaction: newTransaction } = result
@@ -455,8 +448,16 @@ function prosemirrorPosFromContentPos(position: number) {
 }
 
 function getProsemirrorMarksForMarkMap<T>(doc: Automerge.Doc<T>, prop: Prop, index: number): readonly Mark[] {
-    const marks = Automerge.marks(doc, prop).filter(m => m.start <= index && m.end >= index)
-    return marks.map(mark => {
+    const allMarks = Automerge.marks(doc, prop).filter(m => m.start <= index && m.end >= index)
+    const notUnmarked = new Map<string, AutomergeMark>()
+    for (const mark of allMarks) {
+        if (mark.value === null) {
+            notUnmarked.delete(mark.key)
+        } else {
+            notUnmarked.set(mark.key, mark)
+        }
+    }
+    return Array.from(notUnmarked.values()).map(mark => {
         const { key, attr } = getMarkInfo(mark)
         return schema.marks[key].create(attr)
     })
@@ -511,7 +512,7 @@ export function applyProsemirrorTransactionToMicromergeDoc(args: { doc: Automerg
     let patches: Patch[] = []
     const doc = Automerge.change(initialDoc, {
         patchCallback: (p) => {
-            patches = p
+            patches.push(...p)
         }
     }, doc => {
 
@@ -535,7 +536,6 @@ export function applyProsemirrorTransactionToMicromergeDoc(args: { doc: Automerg
 
                 const from = contentPosFromProsemirrorPos(step.from, txn.before)
                 const to = contentPosFromProsemirrorPos(step.to, txn.before)
-
                 const markName = step.mark.type.name
                 if (markName === "comment") {
                     if (!step.mark.attrs || typeof step.mark.attrs.id !== "string") {
@@ -572,6 +572,7 @@ export function applyProsemirrorTransactionToMicromergeDoc(args: { doc: Automerg
     })
 
     const changes = Automerge.getChanges(initialDoc, doc)
+    if (!patches) throw new Error('BUG: patches callback has not occurred yet')
     if (changes.length > 1) throw new Error('BUG: Expected only one change')
     return { doc, change: changes[0], patches }
 }
