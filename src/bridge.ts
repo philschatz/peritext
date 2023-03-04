@@ -110,7 +110,7 @@ const richTextKeymap: any = {
 }
 
 export type Editor = {
-    doc: Automerge.Doc<DocType>
+    // doc: Automerge.Doc<DocType>
     view: EditorView
     queue: ChangeQueue
     outputDebugForChange: (change: Change) => void
@@ -167,14 +167,6 @@ function getMarkInfo(mark: { key: string, value: any }) {
         attr = { id: subkey, text: mark.value }
     }
     return { key, attr }
-}
-
-function getProsemirrorMarksForMarkMap<T>(doc: Automerge.Doc<T>, prop: Prop, index: number): readonly Mark[] {
-    const marks = Automerge.marks(doc, prop).filter(m => m.start <= index && m.end >= index)
-    return marks.map(mark => {
-        const { key, attr } = getMarkInfo(mark)
-        return schema.marks[key].create(attr)
-    })
 }
 
 /** Extends a Prosemirror Transaction with new steps incorporating
@@ -321,14 +313,25 @@ export function createEditor(args: {
         // - apply that Prosemirror Transaction to the document
 
         let transaction = state.tr
-        let patches: Automerge.Patch[] = []
+        let patches: null | Automerge.Patch[] = null
+        const prevDoc = doc
+        console.log('calling applyChanges. Doc currently has ', Automerge.getAllChanges(doc).length, Automerge.getActorId(doc), Automerge.marks(doc, CONTENT_KEY))
         doc = Automerge.applyChanges(doc, incomingChanges, {
             patchCallback: (p) => {
+                console.log('Setting patches!!!!', p)
                 patches = p
             }
         })[0]
+        console.log('called applyChanges. Doc now has ', Automerge.getAllChanges(doc).length, Automerge.getActorId(doc), Automerge.marks(doc, CONTENT_KEY))
 
-        for (const patch of patches) {
+        if (!patches) {
+            console.log('Expected to see some changes', Automerge.marks(prevDoc, CONTENT_KEY), Automerge.marks(doc, CONTENT_KEY))
+            console.log('previous heads', Automerge.getHeads(prevDoc))
+            console.log('current heads', Automerge.getHeads(doc))
+            debugger
+        }
+
+        for (const patch of patches || []) {
             // Get a new Prosemirror transaction containing the effects of the Micromerge patch
             const result = extendProsemirrorTransactionWithMicromergePatch(doc, transaction, patch)
             let { transaction: newTransaction } = result
@@ -421,7 +424,7 @@ export function createEditor(args: {
         },
     })
 
-    return { doc, view, queue, outputDebugForChange }
+    return { view, queue, outputDebugForChange }
 }
 
 /**
@@ -451,6 +454,13 @@ function prosemirrorPosFromContentPos(position: number) {
     return position + 1
 }
 
+function getProsemirrorMarksForMarkMap<T>(doc: Automerge.Doc<T>, prop: Prop, index: number): readonly Mark[] {
+    const marks = Automerge.marks(doc, prop).filter(m => m.start <= index && m.end >= index)
+    return marks.map(mark => {
+        const { key, attr } = getMarkInfo(mark)
+        return schema.marks[key].create(attr)
+    })
+}
 
 // Given a micromerge doc representation, produce a prosemirror doc.
 export function prosemirrorDocFromCRDT(args: { schema: DocSchema; text: string }): Node {
