@@ -110,21 +110,9 @@ const richTextKeymap: any = {
 }
 
 export type Editor = {
-    // doc: Automerge.Doc<DocType>
     view: EditorView
     queue: ChangeQueue
     outputDebugForChange: (change: Change) => void
-}
-
-const describeMarkType = (markType: string): string => {
-    switch (markType) {
-        case "em":
-            return "italic"
-        case "strong":
-            return "bold"
-        default:
-            return markType
-    }
 }
 
 /** Initialize multiple Micromerge docs to all have same base editor state.
@@ -187,7 +175,7 @@ export const extendProsemirrorTransactionWithMicromergePatch = <T>(
     transaction: Transaction,
     patch: Automerge.Patch,
 ): { transaction: Transaction; startPos: number; endPos: number } => {
-    console.log("applying patch", patch)
+    // console.log("applying patch", patch)
     let startPos = Number.POSITIVE_INFINITY
     let endPos = Number.NEGATIVE_INFINITY
     switch (patch.action) {
@@ -572,7 +560,5 @@ export function applyProsemirrorTransactionToMicromergeDoc(args: { doc: Automerg
     })
 
     const changes = Automerge.getChanges(initialDoc, doc)
-    if (!patches) throw new Error('BUG: patches callback has not occurred yet')
-    if (changes.length > 1) throw new Error('BUG: Expected only one change')
     return { doc, change: changes[0], patches }
 }

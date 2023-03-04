@@ -15,7 +15,6 @@ const nodeSpec = {
         content: "text*",
         group: "block",
         toDOM: (): DOMOutputSpecArray => ["p", 0],
-        // code: true,
     },
     text: {},
 } as const
