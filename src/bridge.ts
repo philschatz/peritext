@@ -2,9 +2,8 @@
  * Logic for interfacing between ProseMirror and CRDT.
  */
 
-import { change, unstable as Automerge } from "@automerge/automerge"
-import { Mark as AutomergeMark, Patch } from '@automerge/automerge-wasm'
-// import Micromerge, { OperationPath, Patch } from "./micromerge"
+import { unstable as Automerge } from "@automerge/automerge"
+import { Mark as AutomergeMark, Patch, Prop } from '@automerge/automerge-wasm'
 import { EditorState, TextSelection, Transaction } from "prosemirror-state"
 import { EditorView } from "prosemirror-view"
 import { Schema, Slice, Node, Fragment, Mark, Attrs } from "prosemirror-model"
@@ -15,8 +14,6 @@ import { ReplaceStep, AddMarkStep, RemoveMarkStep } from "prosemirror-transform"
 import { ChangeQueue } from "./changeQueue"
 import type { DocSchema } from "./schema"
 import type { Publisher } from "./pubsub"
-// import type { ActorId, Char, Operation as InternalOperation, InputOperation } from "./micromerge"
-// import { MarkMap, FormatSpanWithText, MarkValue } from "./peritext"
 import type { Comment, CommentId } from "./comment"
 import { v4 as uuid } from "uuid"
 import { clamp } from "lodash"
@@ -53,8 +50,6 @@ export type MarkValue = Assert<
 
 interface AddMarkOperationInputBase<M extends MarkType> {
     action: "addMark"
-    /** Path to a list object. */
-    // path: OperationPath
     /** Index in the list to apply the mark start, inclusive. */
     startIndex: number
     /** Index in the list to end the mark, exclusive. */
@@ -132,24 +127,6 @@ const describeMarkType = (markType: string): string => {
     }
 }
 
-// Returns a natural language description of an op in our CRDT.
-// Just for demo / debug purposes, doesn't cover all cases
-// function describeOp(op: InternalOperation): string {
-//     if (op.action === "set" && op.elemId !== undefined) {
-//         return `${op.value}`
-//     } else if (op.action === "del" && op.elemId !== undefined) {
-//         return `❌ <strong>${String(op.elemId)}</strong>`
-//     } else if (op.action === "addMark") {
-//         return `🖌 format <strong>${describeMarkType(op.markType)}</strong>`
-//     } else if (op.action === "removeMark") {
-//         return `🖌 unformat <strong>${op.markType}</strong>`
-//     } else if (op.action === "makeList") {
-//         return `🗑 reset`
-//     } else {
-//         return op.action
-//     }
-// }
-
 /** Initialize multiple Micromerge docs to all have same base editor state.
  *  The key is that all docs get initialized with a single change that originates
  *  on one of the docs; this avoids weird issues where each doc independently
@@ -161,12 +138,43 @@ export const initializeDocs = (text: string, initialInputOps?: AddMarkOperationI
         doc = Automerge.change(doc, doc => {
             for (const op of initialInputOps) {
                 if (op.action === 'addMark') {
-                    Automerge.mark(doc, 'my_text', op.markType, `[${op.startIndex}..${op.endIndex}]`, true)
+                    if (op.markType === "comment") {
+                        if (!op.attrs || typeof op.attrs.id !== "string") {
+                            throw new Error("Expected comment mark to have id attrs")
+                        }
+                        Automerge.mark(doc, CONTENT_KEY, `${op.markType}:${op.attrs.id}`, buildRange(op.markType, op.startIndex, op.endIndex), true)
+                    } else if (op.markType === "link") {
+                        if (!op.attrs || typeof op.attrs.url !== "string") {
+                            throw new Error("Expected link mark to have url attrs")
+                        }
+                        Automerge.mark(doc, CONTENT_KEY, `${op.markType}`, buildRange(op.markType, op.startIndex, op.endIndex), op.attrs.url)
+                    } else {
+                        Automerge.mark(doc, CONTENT_KEY, `${op.markType}`, buildRange(op.markType, op.startIndex, op.endIndex), true)
+                    }
                 }
             }
         })
     }
     return [doc, Automerge.clone(doc)]
+}
+
+function getMarkInfo(mark: { key: string, value: any }) {
+    const [key, subkey] = mark.key.split(':') // for comment:{uuid}
+    let attr: Attrs | undefined = undefined
+    if (key === 'link')
+        attr = { url: mark.value }
+    if (key === 'comment') {
+        attr = { id: subkey, text: mark.value }
+    }
+    return { key, attr }
+}
+
+function getProsemirrorMarksForMarkMap<T>(doc: Automerge.Doc<T>, prop: Prop, index: number): readonly Mark[] {
+    const marks = Automerge.marks(doc, prop).filter(m => m.start <= index && m.end >= index)
+    return marks.map(mark => {
+        const { key, attr } = getMarkInfo(mark)
+        return schema.marks[key].create(attr)
+    })
 }
 
 /** Extends a Prosemirror Transaction with new steps incorporating
@@ -179,7 +187,8 @@ export const initializeDocs = (text: string, initialInputOps?: AddMarkOperationI
  *      startPos: the Prosemirror position where the patch's effects start
  *      endPos: the Prosemirror position where the patch's effects end
  *    */
-export const extendProsemirrorTransactionWithMicromergePatch = (
+export const extendProsemirrorTransactionWithMicromergePatch = <T>(
+    doc: Automerge.Doc<T>,
     transaction: Transaction,
     patch: Automerge.Patch,
 ): { transaction: Transaction; startPos: number; endPos: number } => {
@@ -187,41 +196,37 @@ export const extendProsemirrorTransactionWithMicromergePatch = (
     let startPos = Number.POSITIVE_INFINITY
     let endPos = Number.NEGATIVE_INFINITY
     switch (patch.action) {
-        // case "insert": {
-        //     const index = prosemirrorPosFromContentPos(patch.index)
-        //     return {
-        //         transaction: transaction.replace(
-        //             index,
-        //             index,
-        //             new Slice(
-        //                 Fragment.from(schema.text(patch.values[0], getProsemirrorMarksForMarkMap(patch.marks))),
-        //                 0,
-        //                 0,
-        //             ),
-        //         ),
-        //         startPos: index,
-        //         endPos: index + 1,
-        //     }
-        // }
-
-        // case "del": {
-        //     const index = prosemirrorPosFromContentPos(patch.index)
-        //     return {
-        //         transaction: transaction.replace(index, index + patch.count, Slice.empty),
-        //         startPos: index,
-        //         endPos: index,
-        //     }
-        // }
+        case "splice": {
+            const [_key, startIndex] = patch.path
+            const index = prosemirrorPosFromContentPos(startIndex as number)
+            return {
+                transaction: transaction.replace(
+                    index,
+                    index,
+                    new Slice(
+                        Fragment.from(schema.text(patch.value, getProsemirrorMarksForMarkMap(doc, CONTENT_KEY, index))),
+                        0,
+                        0,
+                    ),
+                ),
+                startPos: index,
+                endPos: index + 1,
+            }
+        }
+        case "del": {
+            const [_key, startIndex] = patch.path
+            const index = prosemirrorPosFromContentPos(startIndex as number)
+            const length = patch.length || 1
+            return {
+                transaction: transaction.replace(index, index + length, Slice.empty),
+                startPos: index,
+                endPos: index,
+            }
+        }
 
         case "mark": {
             for (const mark of patch.marks) {
-                const [key, subkey] = mark.key.split(':') // for comment:{uuid}
-                let attr: Attrs | undefined = undefined
-                if (key === 'link')
-                    attr = { url: mark.value }
-                if (key === 'comment') {
-                    attr = { id: subkey, text: mark.value }
-                }
+                const { key, attr } = getMarkInfo(mark)
                 if (mark.value === false) {
                     transaction = transaction.removeMark(
                         prosemirrorPosFromContentPos(mark.start),
@@ -244,24 +249,19 @@ export const extendProsemirrorTransactionWithMicromergePatch = (
                 endPos: prosemirrorPosFromContentPos(endPos),
             }
         }
-        // case "removeMark": {
-        //     return {
-        //         transaction: transaction.removeMark(
-        //             prosemirrorPosFromContentPos(patch.startIndex),
-        //             prosemirrorPosFromContentPos(patch.endIndex),
-        //             schema.mark(patch.markType, patch.attrs),
-        //         ),
-        //         startPos: prosemirrorPosFromContentPos(patch.startIndex),
-        //         endPos: prosemirrorPosFromContentPos(patch.endIndex),
-        //     }
-        // }
-        // case "makeList": {
-        //     return {
-        //         transaction: transaction.delete(0, transaction.doc.content.size),
-        //         startPos: 0,
-        //         endPos: 0,
-        //     }
-        // }
+    }
+
+    if (patch.action as any === 'unmark') {
+        const { start, end, key } = patch as unknown as { start: number, end: number, key: string }
+        return {
+            transaction: transaction.removeMark(
+                prosemirrorPosFromContentPos(start),
+                prosemirrorPosFromContentPos(end),
+                schema.mark(key),
+            ),
+            startPos: prosemirrorPosFromContentPos(start),
+            endPos: prosemirrorPosFromContentPos(end),
+        }
     }
     throw new Error(`BUG: Unsupported patch type '${patch.action}'`)
 }
@@ -321,31 +321,35 @@ export function createEditor(args: {
         // - apply that Prosemirror Transaction to the document
 
         let transaction = state.tr
+        let patches: Automerge.Patch[] = []
         doc = Automerge.applyChanges(doc, incomingChanges, {
-            patchCallback: (patches) => {
-                for (const patch of patches) {
-                    // Get a new Prosemirror transaction containing the effects of the Micromerge patch
-                    const result = extendProsemirrorTransactionWithMicromergePatch(transaction, patch)
-                    let { transaction: newTransaction } = result
-                    const { startPos, endPos } = result
-
-                    // If this editor has a callback function defined for handling a remote patch being applied,
-                    // apply that callback and give it the chance to extend the transaction.
-                    // (e.g. this can be used to visualize changes by adding new marks.)
-                    if (onRemotePatchApplied) {
-                        newTransaction = onRemotePatchApplied({
-                            transaction: newTransaction,
-                            view,
-                            startPos,
-                            endPos,
-                        })
-                    }
-
-                    // Assign the newly modified transaction
-                    transaction = newTransaction
-                }
+            patchCallback: (p) => {
+                patches = p
             }
         })[0]
+
+        for (const patch of patches) {
+            // Get a new Prosemirror transaction containing the effects of the Micromerge patch
+            const result = extendProsemirrorTransactionWithMicromergePatch(doc, transaction, patch)
+            let { transaction: newTransaction } = result
+            const { startPos, endPos } = result
+
+            // If this editor has a callback function defined for handling a remote patch being applied,
+            // apply that callback and give it the chance to extend the transaction.
+            // (e.g. this can be used to visualize changes by adding new marks.)
+            if (onRemotePatchApplied) {
+                newTransaction = onRemotePatchApplied({
+                    transaction: newTransaction,
+                    view,
+                    startPos,
+                    endPos,
+                })
+            }
+
+            // Assign the newly modified transaction
+            transaction = newTransaction
+        }
+
 
         state = state.apply(transaction)
         view.updateState(state)
@@ -359,7 +363,7 @@ export function createEditor(args: {
         doc: prosemirrorDocFromCRDT({
             schema,
             // spans: doc.getTextWithFormatting([CONTENT_KEY]),
-            text: doc[CONTENT_KEY]
+            text: doc[CONTENT_KEY].toString()
         }),
     })
 
@@ -387,7 +391,7 @@ export function createEditor(args: {
             if (change) {
                 let transaction = state.tr
                 for (const patch of patches) {
-                    const { transaction: newTxn } = extendProsemirrorTransactionWithMicromergePatch(transaction, patch)
+                    const { transaction: newTxn } = extendProsemirrorTransactionWithMicromergePatch(doc, transaction, patch)
                     transaction = newTxn
                 }
                 state = state.apply(transaction)
@@ -469,6 +473,19 @@ export function prosemirrorDocFromCRDT(args: { schema: DocSchema; text: string }
     return result
 }
 
+function buildRange(markType: string, start: number, end: number) {
+    switch (markType) {
+        case 'comment':
+        case 'link':
+            return `[${start}..${end}]`
+        case 'em':
+        case 'strong':
+            return `(${start}..${end})`
+        default:
+            throw new Error('BUG: unreachable')
+    }
+}
+
 // Given a CRDT Doc and a Prosemirror Transaction, update the micromerge doc.
 export function applyProsemirrorTransactionToMicromergeDoc(args: { doc: Automerge.Doc<DocType>; txn: Transaction }): {
     change: Change | null
@@ -490,18 +507,16 @@ export function applyProsemirrorTransactionToMicromergeDoc(args: { doc: Automerg
 
         for (const step of txn.steps) {
             if (step instanceof ReplaceStep) {
+                const from = contentPosFromProsemirrorPos(step.from, txn.before)
+                const to = contentPosFromProsemirrorPos(step.to, txn.before)
                 if (step.slice) {
                     // handle insertion
-                    doc.my_text = doc.my_text.slice(contentPosFromProsemirrorPos(step.from, txn.before), contentPosFromProsemirrorPos(step.to, txn.before))
-
                     // This step coalesces the multiple paragraphs back into one paragraph. Because step.slice.content is a Fragment and step.slice.content.content is 2 Paragraph nodes
                     const insertedContent = step.slice.content.textBetween(0, step.slice.content.size)
-
-                    const from = contentPosFromProsemirrorPos(step.from, txn.before)
-                    doc.my_text = `${doc.my_text.slice(0, from)}${insertedContent}${doc.my_text.slice(from)}`
+                    Automerge.splice(doc, CONTENT_KEY, from, to - from, insertedContent)
                 } else {
                     // handle deletion
-                    doc.my_text = doc.my_text.slice(contentPosFromProsemirrorPos(step.from, txn.before), contentPosFromProsemirrorPos(step.to, txn.before))
+                    Automerge.splice(doc, CONTENT_KEY, from, to - from)
                 }
             } else if (step instanceof AddMarkStep) {
                 if (!isMarkType(step.mark.type.name)) {
@@ -511,18 +526,19 @@ export function applyProsemirrorTransactionToMicromergeDoc(args: { doc: Automerg
                 const from = contentPosFromProsemirrorPos(step.from, txn.before)
                 const to = contentPosFromProsemirrorPos(step.to, txn.before)
 
-                if (step.mark.type.name === "comment") {
+                const markName = step.mark.type.name
+                if (markName === "comment") {
                     if (!step.mark.attrs || typeof step.mark.attrs.id !== "string") {
                         throw new Error("Expected comment mark to have id attrs")
                     }
-                    Automerge.mark(doc, CONTENT_KEY, `${step.mark.type.name}:${step.mark.attrs.id}`, `[${from}..${to}]`, true)
-                } else if (step.mark.type.name === "link") {
+                    Automerge.mark(doc, CONTENT_KEY, `${markName}:${step.mark.attrs.id}`, buildRange(markName, from, to), true)
+                } else if (markName === "link") {
                     if (!step.mark.attrs || typeof step.mark.attrs.url !== "string") {
                         throw new Error("Expected link mark to have url attrs")
                     }
-                    Automerge.mark(doc, CONTENT_KEY, `${step.mark.type.name}`, `[${from}..${to}]`, step.mark.attrs.url)
+                    Automerge.mark(doc, CONTENT_KEY, `${markName}`, buildRange(markName, from, to), step.mark.attrs.url)
                 } else {
-                    Automerge.mark(doc, CONTENT_KEY, `${step.mark.type.name}`, `[${from}..${to}]`, true)
+                    Automerge.mark(doc, CONTENT_KEY, `${markName}`, buildRange(markName, from, to), true)
                 }
             } else if (step instanceof RemoveMarkStep) {
                 if (!isMarkType(step.mark.type.name)) {

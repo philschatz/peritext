@@ -16,32 +16,32 @@ const renderMarks = (domNode: Element, marks: readonly Mark[]): void => {
 const [aliceDoc, bobDoc] = initializeDocs(
     "This is the Peritext editor demo. Press sync to synchronize the editors. Ctrl-B for bold, Ctrl-i for italic, Ctrl-k for link, Ctrl-e for comment",
     [
-        {
-            action: "addMark",
-            markType: "strong",
-            startIndex: 84,
-            endIndex: 88,
-        },
-        {
-            action: "addMark",
-            markType: "em",
-            startIndex: 100,
-            endIndex: 107,
-        },
-        {
-            action: "addMark",
-            markType: "link",
-            attrs: { url: "http://inkandswitch.com" },
-            startIndex: 120,
-            endIndex: 124,
-        },
-        {
-            action: "addMark",
-            markType: "comment",
-            attrs: { id: "1" },
-            startIndex: 137,
-            endIndex: 144,
-        },
+        // {
+        //     action: "addMark",
+        //     markType: "strong",
+        //     startIndex: 84,
+        //     endIndex: 88,
+        // },
+        // {
+        //     action: "addMark",
+        //     markType: "em",
+        //     startIndex: 100,
+        //     endIndex: 107,
+        // },
+        // {
+        //     action: "addMark",
+        //     markType: "link",
+        //     attrs: { url: "http://inkandswitch.com" },
+        //     startIndex: 120,
+        //     endIndex: 124,
+        // },
+        // {
+        //     action: "addMark",
+        //     markType: "comment",
+        //     attrs: { id: "1" },
+        //     startIndex: 137,
+        //     endIndex: 144,
+        // },
     ],
 )
 
