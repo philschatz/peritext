@@ -158,11 +158,13 @@ const describeMarkType = (markType: string): string => {
 export const initializeDocs = (text: string, initialInputOps?: AddMarkOperationInput[]): [Automerge.Doc<DocType>, Automerge.Doc<DocType>] => {
     let doc = Automerge.from({ my_text: text })
     if (initialInputOps) {
-        for (const op of initialInputOps) {
-            if (op.action === 'addMark') {
-                Automerge.mark(doc, 'my_text', op.markType, `[${op.startIndex}..${op.endIndex}]`, true)
+        doc = Automerge.change(doc, doc => {
+            for (const op of initialInputOps) {
+                if (op.action === 'addMark') {
+                    Automerge.mark(doc, 'my_text', op.markType, `[${op.startIndex}..${op.endIndex}]`, true)
+                }
             }
-        }
+        })
     }
     return [doc, Automerge.clone(doc)]
 }
@@ -288,7 +290,8 @@ export function createEditor(args: {
         endPos: number
     }) => Transaction
 }): Editor {
-    const { actorId, editorNode, changesNode, doc, publisher, handleClickOn, onRemotePatchApplied, editable } = args
+    const { actorId, editorNode, changesNode, publisher, handleClickOn, onRemotePatchApplied, editable } = args
+    let { doc } = args
     const queue = new ChangeQueue({
         handleFlush: (changes: Array<Change>) => {
             publisher.publish(actorId, changes)
@@ -377,15 +380,17 @@ export function createEditor(args: {
             // Apply a corresponding change to the Micromerge document.
             // We observe a Micromerge Patch from applying the change, and
             // apply its effects to our local Prosemirror doc.
-            const { change /*, patches*/ } = applyProsemirrorTransactionToMicromergeDoc({ doc, txn })
+            const result = applyProsemirrorTransactionToMicromergeDoc({ doc, txn })
+            const { change, patches } = result
+            doc = result.doc
+
             if (change) {
-                // let transaction = state.tr
-                // for (const patch of patches) {
-                //     const { transaction: newTxn } = extendProsemirrorTransactionWithMicromergePatch(transaction, patch)
-                //     transaction = newTxn
-                // }
-                // state = state.apply(transaction)
-                state = state.apply(txn)
+                let transaction = state.tr
+                for (const patch of patches) {
+                    const { transaction: newTxn } = extendProsemirrorTransactionWithMicromergePatch(transaction, patch)
+                    transaction = newTxn
+                }
+                state = state.apply(transaction)
                 outputDebugForChange(change)
 
                 // Broadcast the change to remote peers
@@ -468,11 +473,14 @@ export function prosemirrorDocFromCRDT(args: { schema: DocSchema; text: string }
 export function applyProsemirrorTransactionToMicromergeDoc(args: { doc: Automerge.Doc<DocType>; txn: Transaction }): {
     change: Change | null
     patches: Patch[]
+    doc: Automerge.Doc<DocType>
 } {
     const initialDoc = args.doc
     const { txn } = args
-    const operations: Array<AddMarkOperationInput> = []
 
+    if (txn.steps.length === 0) {
+        return { doc: initialDoc, change: null, patches: [] }
+    }
     let patches: Patch[] = []
     const doc = Automerge.change(initialDoc, {
         patchCallback: (p) => {
@@ -539,9 +547,5 @@ export function applyProsemirrorTransactionToMicromergeDoc(args: { doc: Automerg
 
     const changes = Automerge.getChanges(initialDoc, doc)
     if (changes.length > 1) throw new Error('BUG: Expected only one change')
-    if (operations.length > 0) {
-        return { change: changes[0], patches }
-    } else {
-        return { change: null, patches: [] }
-    }
+    return { doc, change: changes[0], patches }
 }
