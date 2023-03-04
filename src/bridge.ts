@@ -321,7 +321,7 @@ export function createEditor(args: {
         // - apply that Prosemirror Transaction to the document
 
         let transaction = state.tr
-        Automerge.applyChanges(doc, incomingChanges, {
+        doc = Automerge.applyChanges(doc, incomingChanges, {
             patchCallback: (patches) => {
                 for (const patch of patches) {
                     // Get a new Prosemirror transaction containing the effects of the Micromerge patch
@@ -345,7 +345,7 @@ export function createEditor(args: {
                     transaction = newTransaction
                 }
             }
-        })
+        })[0]
 
         state = state.apply(transaction)
         view.updateState(state)
