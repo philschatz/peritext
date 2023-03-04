@@ -15,11 +15,8 @@ const renderMarks = (domNode: Element, marks: Mark[]): void => {
         .join("<br/>")
 }
 
-const aliceDoc = new Micromerge("alice")
-const bobDoc = new Micromerge("bob")
-
-initializeDocs(
-    [aliceDoc, bobDoc],
+const [aliceDoc, bobDoc] = initializeDocs(
+    "This is the Peritext editor demo. Press sync to synchronize the editors. Ctrl-B for bold, Ctrl-i for italic, Ctrl-k for link, Ctrl-e for comment",
     [
         {
             path: [Micromerge.contentKey],

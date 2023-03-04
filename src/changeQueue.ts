@@ -1,7 +1,7 @@
 /**
  * Queue for storing editor changes, flushed at a given interval.
  */
-import type { Change } from "./micromerge"
+import type { Change } from "./bridge"
 
 export class ChangeQueue {
     private changes: Array<Change> = []
