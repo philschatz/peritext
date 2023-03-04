@@ -1,15 +1,13 @@
 import { createEditor, initializeDocs } from "./bridge"
 import { Publisher } from "./pubsub"
-import type { Change } from "./micromerge"
-import type { Editor } from "./bridge"
+import type { Change, Editor } from "./bridge"
 import { Mark } from "prosemirror-model"
-import Micromerge from "./micromerge"
 
 const publisher = new Publisher<Array<Change>>()
 
 const editors: { [key: string]: Editor } = {}
 
-const renderMarks = (domNode: Element, marks: Mark[]): void => {
+const renderMarks = (domNode: Element, marks: readonly Mark[]): void => {
     domNode.innerHTML = marks
         .map(m => `• ${m.type.name} ${Object.keys(m.attrs).length !== 0 ? JSON.stringify(m.attrs) : ""}`)
         .join("<br/>")
@@ -19,29 +17,18 @@ const [aliceDoc, bobDoc] = initializeDocs(
     "This is the Peritext editor demo. Press sync to synchronize the editors. Ctrl-B for bold, Ctrl-i for italic, Ctrl-k for link, Ctrl-e for comment",
     [
         {
-            path: [Micromerge.contentKey],
-            action: "insert",
-            index: 0,
-            values: "This is the Peritext editor demo. Press sync to synchronize the editors. Ctrl-B for bold, Ctrl-i for italic, Ctrl-k for link, Ctrl-e for comment".split(
-                "",
-            ),
-        },
-        {
-            path: [Micromerge.contentKey],
             action: "addMark",
             markType: "strong",
             startIndex: 84,
             endIndex: 88,
         },
         {
-            path: [Micromerge.contentKey],
             action: "addMark",
             markType: "em",
             startIndex: 100,
             endIndex: 107,
         },
         {
-            path: [Micromerge.contentKey],
             action: "addMark",
             markType: "link",
             attrs: { url: "http://inkandswitch.com" },
@@ -49,7 +36,6 @@ const [aliceDoc, bobDoc] = initializeDocs(
             endIndex: 124,
         },
         {
-            path: [Micromerge.contentKey],
             action: "addMark",
             markType: "comment",
             attrs: { id: "1" },

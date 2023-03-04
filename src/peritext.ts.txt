@@ -291,7 +291,7 @@ function finishPartialPatch(partialPatch: PartialPatch, endIndex: number, length
 // we could radically simplify this by storing opId separately,
 // giving em/strong a boolean attrs and treating equality as key/attr equality
 // might be worth doing for the AM implementation
-export function opsToMarks(ops: Set<MarkOperation>): MarkMap {
+function opsToMarks(ops: Set<MarkOperation>): MarkMap {
     const markMap: MarkMap = {}
     const opIdMap: Record<MarkType, OperationId> = {}
 

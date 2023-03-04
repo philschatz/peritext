@@ -15,22 +15,63 @@ import { ReplaceStep, AddMarkStep, RemoveMarkStep } from "prosemirror-transform"
 import { ChangeQueue } from "./changeQueue"
 import type { DocSchema } from "./schema"
 import type { Publisher } from "./pubsub"
-import type { ActorId, Char, Operation as InternalOperation, InputOperation } from "./micromerge"
-import { MarkMap, FormatSpanWithText, MarkValue } from "./peritext"
+// import type { ActorId, Char, Operation as InternalOperation, InputOperation } from "./micromerge"
+// import { MarkMap, FormatSpanWithText, MarkValue } from "./peritext"
 import type { Comment, CommentId } from "./comment"
 import { v4 as uuid } from "uuid"
 import { clamp } from "lodash"
 
 export const schema = new Schema(schemaSpec)
 
+type ActorId = string
 export type Change = Uint8Array
 const CONTENT_KEY = "my_text"
 type DocType = { my_text: string }
 
 export type RootDoc = {
-    text: Array<Char>
+    my_text: string
     comments: Record<CommentId, Comment>
 }
+
+type CommentMarkValue = {
+    id: string
+}
+
+type BooleanMarkValue = { active: boolean }
+type LinkMarkValue = { url: string }
+
+export type MarkValue = Assert<
+    {
+        strong: BooleanMarkValue
+        em: BooleanMarkValue
+        comment: CommentMarkValue
+        link: LinkMarkValue
+    },
+    { [K in MarkType]: Record<string, unknown> }
+>
+
+
+interface AddMarkOperationInputBase<M extends MarkType> {
+    action: "addMark"
+    /** Path to a list object. */
+    // path: OperationPath
+    /** Index in the list to apply the mark start, inclusive. */
+    startIndex: number
+    /** Index in the list to end the mark, exclusive. */
+    endIndex: number
+    /** Mark to add. */
+    markType: M
+}
+
+// TODO: automatically populate attrs type w/o manual enumeration
+export type AddMarkOperationInput = Values<{
+    [M in MarkType]: keyof Omit<MarkValue[M], "active"> extends never
+    ? AddMarkOperationInputBase<M> & { attrs?: undefined }
+    : AddMarkOperationInputBase<M> & {
+        attrs: Required<Omit<MarkValue[M], "active">>
+    }
+}>
+
 
 // This is a factory which returns a Prosemirror command.
 // The Prosemirror command adds a mark to the document.
@@ -93,28 +134,28 @@ const describeMarkType = (markType: string): string => {
 
 // Returns a natural language description of an op in our CRDT.
 // Just for demo / debug purposes, doesn't cover all cases
-function describeOp(op: InternalOperation): string {
-    if (op.action === "set" && op.elemId !== undefined) {
-        return `${op.value}`
-    } else if (op.action === "del" && op.elemId !== undefined) {
-        return `❌ <strong>${String(op.elemId)}</strong>`
-    } else if (op.action === "addMark") {
-        return `🖌 format <strong>${describeMarkType(op.markType)}</strong>`
-    } else if (op.action === "removeMark") {
-        return `🖌 unformat <strong>${op.markType}</strong>`
-    } else if (op.action === "makeList") {
-        return `🗑 reset`
-    } else {
-        return op.action
-    }
-}
+// function describeOp(op: InternalOperation): string {
+//     if (op.action === "set" && op.elemId !== undefined) {
+//         return `${op.value}`
+//     } else if (op.action === "del" && op.elemId !== undefined) {
+//         return `❌ <strong>${String(op.elemId)}</strong>`
+//     } else if (op.action === "addMark") {
+//         return `🖌 format <strong>${describeMarkType(op.markType)}</strong>`
+//     } else if (op.action === "removeMark") {
+//         return `🖌 unformat <strong>${op.markType}</strong>`
+//     } else if (op.action === "makeList") {
+//         return `🗑 reset`
+//     } else {
+//         return op.action
+//     }
+// }
 
 /** Initialize multiple Micromerge docs to all have same base editor state.
  *  The key is that all docs get initialized with a single change that originates
  *  on one of the docs; this avoids weird issues where each doc independently
  *  tries to initialize the basic structure of the document.
  */
-export const initializeDocs = (text: string, initialInputOps?: InputOperation[]): [Automerge.Doc<DocType>, Automerge.Doc<DocType>] => {
+export const initializeDocs = (text: string, initialInputOps?: AddMarkOperationInput[]): [Automerge.Doc<DocType>, Automerge.Doc<DocType>] => {
     let doc = Automerge.from({ my_text: text })
     if (initialInputOps) {
         for (const op of initialInputOps) {
@@ -315,7 +356,7 @@ export function createEditor(args: {
         doc: prosemirrorDocFromCRDT({
             schema,
             // spans: doc.getTextWithFormatting([CONTENT_KEY]),
-            spans: [{ text: doc[CONTENT_KEY], marks: {} }],
+            text: doc[CONTENT_KEY]
         }),
     })
 
@@ -401,33 +442,14 @@ function prosemirrorPosFromContentPos(position: number) {
     return position + 1
 }
 
-function getProsemirrorMarksForMarkMap<T extends MarkMap>(markMap: T): Mark[] {
-    const marks = []
-    for (const markType of ALL_MARKS) {
-        const markValue = markMap[markType]
-        if (markValue === undefined) {
-            continue
-        }
-        if (Array.isArray(markValue)) {
-            for (const value of markValue) {
-                marks.push(schema.mark(markType, value))
-            }
-        } else {
-            if (markValue) {
-                marks.push(schema.mark(markType, markValue))
-            }
-        }
-    }
-    return marks
-}
 
 // Given a micromerge doc representation, produce a prosemirror doc.
-export function prosemirrorDocFromCRDT(args: { schema: DocSchema; spans: FormatSpanWithText[] }): Node {
-    const { schema, spans } = args
+export function prosemirrorDocFromCRDT(args: { schema: DocSchema; text: string }): Node {
+    const { schema, text } = args
 
     // Prosemirror doesn't allow for empty text nodes;
     // if our doc is empty, we short-circuit and don't add any text nodes.
-    if (spans.length === 1 && spans[0].text === "") {
+    if (text === "") {
         return schema.node("doc", undefined, [schema.node("paragraph", [])])
     }
 
@@ -435,9 +457,7 @@ export function prosemirrorDocFromCRDT(args: { schema: DocSchema; spans: FormatS
         schema.node(
             "paragraph",
             undefined,
-            spans.map(span => {
-                return schema.text(span.text, getProsemirrorMarksForMarkMap(span.marks))
-            }),
+            schema.text(text, []), // getProsemirrorMarksForMarkMap(span.marks))
         ),
     ])
 
@@ -451,7 +471,7 @@ export function applyProsemirrorTransactionToMicromergeDoc(args: { doc: Automerg
 } {
     const initialDoc = args.doc
     const { txn } = args
-    const operations: Array<InputOperation> = []
+    const operations: Array<AddMarkOperationInput> = []
 
     let patches: Patch[] = []
     const doc = Automerge.change(initialDoc, {
